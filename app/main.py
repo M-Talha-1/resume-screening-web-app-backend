@@ -1,7 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
+from app.database import get_db
 
 app = FastAPI()
 
 @app.get("/")
-def read_root():
-    return {"message": "Resume Screening API is running!"}
+def root():
+    return {"message": "Welcome to Resume Screening API!"}
+
+@app.get("/test_db")
+def test_db(db: Session = Depends(get_db)):
+    return {"message": "Database connection successful!"}

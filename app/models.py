@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float, JSON, DateTime, func
 from sqlalchemy.orm import relationship
-from app.database import Base  # Import Base to define models
+from app.database import Base  
 
 class Applicant(Base):
     __tablename__ = "applicants"
@@ -9,7 +9,7 @@ class Applicant(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
     phone = Column(String, nullable=True)
-    skills = Column(Text, nullable=True)  # Store skills as a comma-separated string
+    skills = Column(JSON, nullable=True)  # Store skills as a list of strings instead of comma-separated
     designation = Column(String, nullable=True)
     total_experience = Column(Float, nullable=True)  # Store experience in years
 
@@ -34,6 +34,10 @@ class JobDescription(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="Open")  # Example statuses: "Open", "Closed", "Draft"
+    skills = Column(JSON, nullable=True)  # Store required skills as a list
+    location = Column(String, nullable=True)  # Job location
+    date_created = Column(DateTime, server_default=func.now())
 
     resumes = relationship("Resume", back_populates="job", cascade="all, delete-orphan")
     evaluations = relationship("CandidateEvaluation", back_populates="job", cascade="all, delete-orphan")
@@ -43,8 +47,8 @@ class CandidateEvaluation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="CASCADE"))
-    job_id = Column(Integer, ForeignKey("job_descriptions.id", ondelete="CASCADE"))  # Renamed for consistency
-    score = Column(Integer, nullable=False)  # Score based on NLP matching
+    job_id = Column(Integer, ForeignKey("job_descriptions.id", ondelete="CASCADE"))  
+    score = Column(Float, nullable=False)  # Use Float instead of Integer for more precise scoring
     status = Column(String, nullable=False, default="Pending")  # e.g., "Accepted", "Rejected", "Pending"
 
     resume = relationship("Resume", back_populates="evaluation")

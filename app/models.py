@@ -10,6 +10,10 @@ class Applicant(Base):
     email = Column(String, unique=True, nullable=False)
     role = Column(String, nullable=False, default="Applicant")
     date_created = Column(DateTime, server_default=func.now())
+    phone = Column(String, nullable=True)
+    skills = Column(JSON, nullable=True)
+    designation = Column(String, nullable=True)
+    total_experience = Column(Float, nullable=True)
 
     resumes = relationship("Resume", back_populates="applicant", cascade="all, delete-orphan")
 
@@ -22,6 +26,7 @@ class Resume(Base):
     file_path = Column(String, nullable=False)
     upload_date = Column(DateTime, server_default=func.now())
     parsed_status = Column(String, default="Pending")
+    text_content = Column(Text, nullable=True)
 
     applicant = relationship("Applicant", back_populates="resumes")
     job = relationship("JobDescription", back_populates="resumes")  # ✅ Linked correctly
@@ -56,7 +61,7 @@ class CandidateEvaluation(Base):
 
     resume = relationship("Resume", back_populates="evaluation")
     job = relationship("JobDescription", back_populates="evaluations")
-    hr_manager = relationship("HRManager")
+    hr_manager = relationship("HRManager", back_populates="evaluations")
 
 class Admin(Base):
     __tablename__ = "admins"
@@ -66,7 +71,7 @@ class Admin(Base):
     email = Column(String, unique=True, nullable=False)
     role = Column(String, nullable=False, default="Admin")
 
-    jobs = relationship("JobDescription", backref="admin")
+    job_descriptions = relationship("JobDescription", back_populates="admin")
 
 class HRManager(Base):
     __tablename__ = "hr_managers"
@@ -76,4 +81,4 @@ class HRManager(Base):
     email = Column(String, unique=True, nullable=False)
     role = Column(String, nullable=False, default="HR Manager")
 
-    evaluations = relationship("CandidateEvaluation", backref="hr_manager")
+    evaluations = relationship("CandidateEvaluation", back_populates="hr_manager")

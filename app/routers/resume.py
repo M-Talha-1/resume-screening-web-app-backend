@@ -2,59 +2,59 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Resume, Applicant, JobDescription
-from app.services.resume_parser import extract_resume_data  # Your custom parser
-from app.services.file_service import save_resume  # Import file handling function
+from app.services.resume_parser import extract_resume_data
+from app.services.save_file import save_resume
+from app.schemas import ResumeResponse
 
 router = APIRouter()
 
-@router.post("/upload-resume/")
+@router.post("/upload-resume/", response_model=ResumeResponse)
 def upload_resume(
     file: UploadFile = File(...),
-    job_id: int = Form(...),  # Get job_id from form data
+    job_description_id: int = Form(...),
     db: Session = Depends(get_db)
 ):
     try:
-        # Validate job_id
-        job = db.query(JobDescription).filter_by(id=job_id).first()
+        job = db.query(JobDescription).filter_by(id=job_description_id).first()
         if not job:
             raise HTTPException(status_code=400, detail="Invalid job ID")
 
-        # Save the file using file_service.py
         file_path = save_resume(file)
-
-        # Extract resume data
         parsed_data = extract_resume_data(file_path)
 
         if not parsed_data:
-            raise HTTPException(status_code=400, detail="Failed to extract resume data")
+            raise HTTPException(status_code=400, detail="Resume parsing failed")
 
-        # Check if applicant exists
         applicant = db.query(Applicant).filter_by(email=parsed_data["email"]).first()
         if not applicant:
             applicant = Applicant(
                 name=parsed_data["name"],
                 email=parsed_data["email"],
-                phone=parsed_data["mobile_number"],
-                skills=",".join(parsed_data.get("skills", [])),  # Store as comma-separated string
+                phone=parsed_data.get("mobile_number"),
+                skills=parsed_data.get("skills", []),
                 designation=parsed_data.get("designation"),
-                total_experience=parsed_data.get("total_experience", 0),
+                total_experience=parsed_data.get("total_experience", 0.0)
             )
             db.add(applicant)
             db.commit()
             db.refresh(applicant)
 
-        # Insert resume data linked to the job
+        existing_resume = db.query(Resume).filter_by(applicant_id=applicant.id, job_description_id=job_description_id).first()
+        if existing_resume:
+            raise HTTPException(status_code=400, detail="Resume already submitted for this job")
+
         db_resume = Resume(
             applicant_id=applicant.id,
-            job_id=job_id,  # Associate with job
-            file_url=file_path,
+            job_description_id=job_description_id,
+            file_path=file_path,
             text_content=parsed_data["raw_text"],
+            parsed_status="Parsed"
         )
         db.add(db_resume)
         db.commit()
         db.refresh(db_resume)
 
-        return {"message": "Resume uploaded successfully!", "resume_id": db_resume.id, "job_id": job_id}
+        return db_resume
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.schemas import JobDescriptionRequest, JobResponse
 from app.database import get_db
-from app.schemas.job_schema import JobDescriptionRequest, JobResponse  # Moved schemas to a clean file
 from app.services import job_service
 from typing import List
 

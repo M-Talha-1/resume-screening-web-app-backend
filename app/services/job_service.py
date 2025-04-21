@@ -13,7 +13,8 @@ def create_job(job_data, db: Session):
         new_job = JobDescription(
             title=job_data.title,
             description=job_data.description,
-            status=job_data.status
+            status=job_data.status,
+            admin_id=job_data.admin_id  # added this line
         )
         db.add(new_job)
         db.commit()

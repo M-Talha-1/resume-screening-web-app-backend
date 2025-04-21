@@ -28,14 +28,14 @@ def match_resumes(job_id: int, db: Session = Depends(get_db)):
         ).first()
 
         if evaluation:
-            evaluation.score = score
+            evaluation.suitability_score = score
             evaluation.status = "Accepted" if score >= 70 else "Rejected"
         else:
             evaluation = CandidateEvaluation(
                 resume_id=resume.id,
                 job_id=job_id,
-                score=score,
-                status="Accepted" if score >= 70 else "Rejected"
+                suitability_score=score,
+                status="Accepted" if score >= 70 else "Rejected",
             )
             db.add(evaluation)
 

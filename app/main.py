@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import resume  
 from app.routers import job
 from app.routers import matching
+from app.routers import auth
+
+
 
 # Initialize FastAPI app first
 app = FastAPI()
@@ -17,6 +20,7 @@ app.add_middleware(
 )
 
 # Include the routers
+app.include_router(auth.router)
 app.include_router(resume.router)
 app.include_router(job.router)
 app.include_router(matching.router)

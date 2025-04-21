@@ -1,6 +1,20 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 from datetime import datetime
+
+class UserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str  # e.g., "admin", "hr"
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 class ApplicantBase(BaseModel):
     name: str
@@ -43,3 +57,4 @@ class JobResponse(BaseModel):
 
     class Config:
         orm_mode = True
+

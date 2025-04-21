@@ -18,25 +18,30 @@ class Resume(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     applicant_id = Column(Integer, ForeignKey("applicants.id", ondelete="CASCADE"))
+    job_description_id = Column(Integer, ForeignKey("job_descriptions.id", ondelete="CASCADE"))  # ✅ Correct FK
     file_path = Column(String, nullable=False)
     upload_date = Column(DateTime, server_default=func.now())
-    parsed_status = Column(String, nullable=False, default="Pending")
+    parsed_status = Column(String, default="Pending")
 
     applicant = relationship("Applicant", back_populates="resumes")
+    job = relationship("JobDescription", back_populates="resumes")  # ✅ Linked correctly
     evaluation = relationship("CandidateEvaluation", back_populates="resume", cascade="all, delete-orphan")
 
 class JobDescription(Base):
     __tablename__ = "job_descriptions"
 
     id = Column(Integer, primary_key=True, index=True)
-    admin_id = Column(Integer, ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
+    admin_id = Column(Integer, ForeignKey("admins.id", ondelete="SET NULL"))
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     required_skills = Column(JSON, nullable=True)
     posted_date = Column(DateTime, server_default=func.now())
+    status = Column(String, nullable=False, default="Open")
 
-    resumes = relationship("Resume", back_populates="job", cascade="all, delete-orphan")
+    admin = relationship("Admin", back_populates="job_descriptions")
+    resumes = relationship("Resume", back_populates="job", cascade="all, delete-orphan")  # ✅ Matches Resume.job
     evaluations = relationship("CandidateEvaluation", back_populates="job", cascade="all, delete-orphan")
+
 
 class CandidateEvaluation(Base):
     __tablename__ = "candidate_evaluations"

@@ -1,0 +1,21 @@
+John Doe
+Software Engineer
+test@example.com
++1234567890
+
+Skills:
+- Python
+- FastAPI
+- PostgreSQL
+- Docker
+- AWS
+
+Experience:
+Software Engineer at Tech Corp (2020-Present)
+- Developed and maintained web applications using Python and FastAPI
+- Implemented database solutions using PostgreSQL
+- Deployed applications using Docker and AWS
+
+Education:
+Bachelor of Science in Computer Science
+University of Technology (2016-2020)

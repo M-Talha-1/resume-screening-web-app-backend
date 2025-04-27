@@ -1,11 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import timedelta
+from app.routers import screening
 from app.routers.auth import router as auth_router
 from app.routers.jobs import router as jobs_router
 from app.routers.analytics import router as analytics_router
 from app.routers.resume import router as resume_router
-from app.database import engine, Base
+from app.database import engine, Base, get_db
 from app.cache import init_cache
+from app.models import User
+from app.auth import authenticate_user, create_access_token
 import logging
 
 # Configure logging
@@ -25,7 +31,7 @@ except Exception as e:
 init_cache()
 
 app = FastAPI(
-    title="Resume Web Backend",
+    title="Resume Screening API",
     description="Backend API for Resume Web Application",
     version="1.0.0"
 )
@@ -40,10 +46,30 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(screening.router)
 app.include_router(auth_router)
 app.include_router(jobs_router)
 app.include_router(analytics_router)
 app.include_router(resume_router)
+
+# Token endpoint
+@app.post("/token")
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = create_access_token(
+        data={"sub": user.email, "role": user.role},
+        expires_delta=timedelta(minutes=30)
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/")
 async def root():

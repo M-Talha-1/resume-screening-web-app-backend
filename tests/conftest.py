@@ -1,18 +1,15 @@
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
-import os
-from dotenv import load_dotenv
+from app.auth import create_access_token
+from app.models import User, JobDescription, Resume, CandidateEvaluation, Applicant
+from fastapi.testclient import TestClient
+from datetime import datetime, timedelta
 
-# Load environment variables
-load_dotenv()
-
-# Use in-memory SQLite for testing
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+SQLALCHEMY_DATABASE_URL = "sqlite://"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
@@ -21,58 +18,48 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-@pytest.fixture(scope="session")
-def test_db():
-    # Create test database tables
+@pytest.fixture(scope="function")
+def db():
+    Base.metadata.drop_all(bind=engine)  # Ensure clean state
     Base.metadata.create_all(bind=engine)
-    yield
-    # Drop all tables after tests
-    Base.metadata.drop_all(bind=engine)
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.rollback()  # Rollback any pending transactions
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @pytest.fixture(scope="function")
-def db_session(test_db):
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-    
-    yield session
-    
-    session.close()
-    transaction.rollback()
-    connection.close()
-
-@pytest.fixture(scope="function")
-def client(db_session):
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-    
+def client():
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    return TestClient(app)
 
 @pytest.fixture(scope="function")
-def test_user(client, db_session):
-    user_data = {
-        "name": "Test User",
-        "email": "test@example.com",
-        "password": "testpassword",
-        "role": "admin"
-    }
-    response = client.post("/auth/register", json=user_data)
-    assert response.status_code == 201
-    return response.json()
+def test_hr_manager(db):
+    user = User(
+        name="HR Manager",
+        email="hr@example.com",
+        hashed_password="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewfJAAcxgpK.Dvie",  # Test password
+        role="hr_manager",
+        is_active=True
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 @pytest.fixture(scope="function")
-def auth_headers(client, test_user):
-    login_data = {
-        "username": test_user["email"],
-        "password": "testpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    assert response.status_code == 200
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"} 
+def test_token(test_hr_manager):
+    access_token = create_access_token(
+        data={"sub": test_hr_manager.email},
+        expires_delta=timedelta(minutes=30)
+    )
+    return access_token 

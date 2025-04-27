@@ -1,7 +1,6 @@
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import QueuePool
 import os
 from dotenv import load_dotenv
 from typing import Generator
@@ -9,31 +8,19 @@ from typing import Generator
 # Load environment variables
 load_dotenv()
 
-# Use peer authentication with current system user
-DATABASE_URL = "postgresql://backenddev:root%40123@localhost/resume_db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
 # Create engine with connection pooling
 engine = create_engine(
-    DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=1800,  # Recycle connections after 30 minutes
-    echo=True  # Enable SQL query logging for debugging
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False}
 )
 
 # Create session factory
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-    expire_on_commit=False  # Prevent detached instance errors
-)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Define Base
 Base = declarative_base()
-metadata = MetaData()
 
 def get_db() -> Generator:
     """

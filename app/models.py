@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float, JSON, DateTime, func, Enum
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, Float, JSON, DateTime, func, Enum, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
@@ -28,9 +28,10 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     date_created = Column(DateTime, server_default=func.now())
     last_login = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
 
     job_descriptions = relationship("JobDescription", back_populates="admin")
-    evaluations = relationship("CandidateEvaluation", back_populates="hr_user")
+    evaluations = relationship("CandidateEvaluation", back_populates="hr_manager")
 
 
 class Applicant(Base):
@@ -70,7 +71,7 @@ class Resume(Base):
 
     applicant = relationship("Applicant", back_populates="resumes")
     job = relationship("JobDescription", back_populates="resumes")
-    evaluation = relationship("CandidateEvaluation", back_populates="resume", cascade="all, delete-orphan")
+    evaluations = relationship("CandidateEvaluation", back_populates="resume", cascade="all, delete-orphan")
 
 
 class JobDescription(Base):
@@ -103,20 +104,18 @@ class CandidateEvaluation(Base):
     __tablename__ = "candidate_evaluations"
 
     id = Column(Integer, primary_key=True, index=True)
-    resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="CASCADE"))
-    job_id = Column(Integer, ForeignKey("job_descriptions.id", ondelete="CASCADE"))
-    hr_manager_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resume_id = Column(Integer, ForeignKey("resumes.id"), nullable=False)
+    job_id = Column(Integer, ForeignKey("job_descriptions.id"), nullable=False)
+    hr_manager_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     suitability_score = Column(Float, nullable=False)
-    comments = Column(Text, nullable=True)
-    status = Column(Enum(EvaluationStatus), nullable=False, default=EvaluationStatus.PENDING)
-    evaluation_date = Column(DateTime, server_default=func.now())
-    last_updated = Column(DateTime, onupdate=func.now())
-    interview_date = Column(DateTime, nullable=True)
-    interview_notes = Column(Text, nullable=True)
-    offer_details = Column(JSON, nullable=True)
-    rejection_reason = Column(String, nullable=True)
+    comments = Column(Text, nullable=False)
+    status = Column(String(50), nullable=False)
+    evaluation_date = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, onupdate=datetime.utcnow)
+    evaluation_duration = Column(Float, nullable=True)  # Duration in minutes
+    evaluation_start_time = Column(DateTime, nullable=True)  # When evaluation started
 
-    resume = relationship("Resume", back_populates="evaluation")
+    resume = relationship("Resume", back_populates="evaluations")
     job = relationship("JobDescription", back_populates="evaluations")
-    hr_user = relationship("User", back_populates="evaluations")
+    hr_manager = relationship("User", back_populates="evaluations")
 

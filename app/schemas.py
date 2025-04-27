@@ -107,25 +107,32 @@ class ResumeResponse(ResumeBase):
     class Config:
         orm_mode = True
 
+class EvaluateRequest(BaseModel):
+    resume_id: int
+    job_id: int
+
 class CandidateEvaluationBase(BaseModel):
     resume_id: int
     job_id: int
-    hr_manager_id: Optional[int] = None
     suitability_score: float
-    comments: Optional[str] = None
-    status: EvaluationStatus = EvaluationStatus.PENDING
-    interview_date: Optional[datetime] = None
-    interview_notes: Optional[str] = None
-    offer_details: Optional[Dict[str, Any]] = None
-    rejection_reason: Optional[str] = None
+    comments: str
+    status: str
 
 class CandidateEvaluationCreate(CandidateEvaluationBase):
     pass
 
+class CandidateEvaluationUpdate(BaseModel):
+    suitability_score: Optional[float] = None
+    comments: Optional[str] = None
+    status: Optional[str] = None
+
 class CandidateEvaluationResponse(CandidateEvaluationBase):
     id: int
+    hr_manager_id: int
     evaluation_date: datetime
     last_updated: Optional[datetime] = None
+    evaluation_duration: Optional[float] = None  # Duration in minutes
+    evaluation_start_time: Optional[datetime] = None
 
     class Config:
         orm_mode = True

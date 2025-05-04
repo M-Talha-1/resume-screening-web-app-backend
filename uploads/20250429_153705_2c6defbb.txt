@@ -1,0 +1,22 @@
+John Doe
+Software Developer
+
+Email: john.doe@example.com
+Phone: 123-456-7890
+
+Experience:
+- Senior Python Developer at Tech Corp (2018-present)
+- Full Stack Developer at Web Solutions (2015-2018)
+
+Skills:
+- Python, FastAPI, Django
+- PostgreSQL, MongoDB
+- Docker, Kubernetes
+- React, JavaScript
+
+Education:
+- Bachelor's in Computer Science, Tech University (2015)
+
+Projects:
+- Built a scalable microservices architecture using FastAPI and Docker
+- Developed an automated testing framework using Python and pytest 

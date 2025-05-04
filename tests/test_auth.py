@@ -1,141 +1,106 @@
-from fastapi import status
+import pytest
+from fastapi import HTTPException
+from datetime import timedelta
+import uuid
+from app.auth import (
+    verify_password,
+    get_password_hash,
+    authenticate_user,
+    create_access_token,
+    get_current_user
+)
 from app.models import User
-from app.auth import get_password_hash
+from app.schemas import TokenData
 
-def test_create_user(client, db_session):
-    # Test data
-    user_data = {
-        "name": "Test User",
-        "email": "test@example.com",
-        "password": "testpassword",
-        "role": "admin"
-    }
-    
-    # Create user
-    response = client.post("/auth/register", json=user_data)
-    assert response.status_code == status.HTTP_201_CREATED
-    data = response.json()
-    assert data["email"] == user_data["email"]
-    assert data["name"] == user_data["name"]
-    assert data["role"] == user_data["role"]
-    assert "id" in data
+def test_verify_password():
+    password = "testpassword123!"
+    hashed_password = get_password_hash(password)
+    assert verify_password(password, hashed_password) is True
+    assert verify_password("wrongpassword", hashed_password) is False
 
-def test_login_user(client, db_session):
-    # Create test user
-    user = User(
-        name="Test User",
-        email="test@example.com",
-        hashed_password=get_password_hash("testpassword"),
-        role="admin"
+def test_get_password_hash():
+    password = "testpassword123!"
+    hashed_password = get_password_hash(password)
+    assert hashed_password is not None
+    assert hashed_password != password
+    assert len(hashed_password) > 0
+
+def test_authenticate_user_success(db_session, test_user):
+    authenticated_user = authenticate_user(
+        db_session,
+        email=test_user.email,
+        password="testpassword"
     )
-    db_session.add(user)
+    assert authenticated_user is not None
+    assert authenticated_user.id == test_user.id
+    assert authenticated_user.email == test_user.email
+
+def test_authenticate_user_wrong_password(db_session, test_user):
+    authenticated_user = authenticate_user(
+        db_session,
+        email=test_user.email,
+        password="wrongpassword"
+    )
+    assert authenticated_user is None
+
+def test_authenticate_user_nonexistent(db_session):
+    unique_id = str(uuid.uuid4())
+    authenticated_user = authenticate_user(
+        db_session,
+        email=f"nonexistent{unique_id}@example.com",
+        password="testpassword"
+    )
+    assert authenticated_user is None
+
+def test_create_access_token():
+    data = {"sub": "test@example.com"}
+    token = create_access_token(data)
+    assert token is not None
+    assert len(token) > 0
+
+def test_create_access_token_with_expiry():
+    data = {"sub": "test@example.com"}
+    expires_delta = timedelta(minutes=15)
+    token = create_access_token(data, expires_delta)
+    assert token is not None
+    assert len(token) > 0
+
+@pytest.mark.asyncio
+async def test_get_current_user_valid_token(db_session, test_user):
+    token = create_access_token({"sub": test_user.email})
+    user = await get_current_user(token, db_session)
+    assert user is not None
+    assert user.id == test_user.id
+    assert user.email == test_user.email
+
+@pytest.mark.asyncio
+async def test_get_current_user_invalid_token(db_session):
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user("invalid_token", db_session)
+    assert exc_info.value.status_code == 401
+
+@pytest.mark.asyncio
+async def test_get_current_user_expired_token(db_session, test_user):
+    # Create an expired token
+    data = {"sub": test_user.email}
+    expires_delta = timedelta(minutes=-1)  # Negative delta to create expired token
+    token = create_access_token(data, expires_delta)
+    
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(token, db_session)
+    assert exc_info.value.status_code == 401
+
+@pytest.mark.asyncio
+async def test_get_current_user_inactive_user(db_session, test_user):
+    # Make user inactive
+    test_user.is_active = False
     db_session.commit()
     
-    # Test login
-    login_data = {
-        "username": "test@example.com",
-        "password": "testpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert "access_token" in data
-    assert data["token_type"] == "bearer"
-
-def test_login_invalid_credentials(client, db_session):
-    # Test login with invalid credentials
-    login_data = {
-        "username": "nonexistent@example.com",
-        "password": "wrongpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
-def test_get_current_user(client, db_session):
-    # Create test user
-    user = User(
-        name="Test User",
-        email="test@example.com",
-        hashed_password=get_password_hash("testpassword"),
-        role="admin"
-    )
-    db_session.add(user)
-    db_session.commit()
+    token = create_access_token({"sub": test_user.email})
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(token, db_session)
+    assert exc_info.value.status_code == 401
     
-    # Get token
-    login_data = {
-        "username": "test@example.com",
-        "password": "testpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    token = response.json()["access_token"]
-    
-    # Test getting current user
-    response = client.get(
-        "/auth/me",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["email"] == "test@example.com"
-    assert data["name"] == "Test User"
-    assert data["role"] == "admin"
-
-def test_register_user(client):
-    user_data = {
-        "name": "New User",
-        "email": "newuser@example.com",
-        "password": "newpassword",
-        "role": "admin"
-    }
-    response = client.post("/auth/register", json=user_data)
-    assert response.status_code == 201
-    data = response.json()
-    assert data["email"] == user_data["email"]
-    assert data["name"] == user_data["name"]
-    assert data["role"] == user_data["role"]
-    assert "id" in data
-
-def test_register_duplicate_user(client, test_user):
-    user_data = {
-        "name": "Test User",
-        "email": "test@example.com",  # Same email as test_user
-        "password": "testpassword",
-        "role": "admin"
-    }
-    response = client.post("/auth/register", json=user_data)
-    assert response.status_code == 400
-    assert "Email already registered" in response.json()["detail"]
-
-def test_login_user(client, test_user):
-    login_data = {
-        "username": test_user["email"],
-        "password": "testpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    assert data["token_type"] == "bearer"
-
-def test_login_invalid_credentials(client):
-    login_data = {
-        "username": "wrong@example.com",
-        "password": "wrongpassword"
-    }
-    response = client.post("/auth/token", data=login_data)
-    assert response.status_code == 401
-    assert "Incorrect email or password" in response.json()["detail"]
-
-def test_get_current_user(client, auth_headers):
-    response = client.get("/auth/me", headers=auth_headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["email"] == "test@example.com"
-    assert data["role"] == "admin"
-
-def test_get_current_user_invalid_token(client):
-    headers = {"Authorization": "Bearer invalid_token"}
-    response = client.get("/auth/me", headers=headers)
-    assert response.status_code == 401
-    assert "Invalid token" in response.json()["detail"] 
+    # Reset user state
+    test_user.is_active = True
+    db_session.commit() 

@@ -8,7 +8,7 @@ from fastapi import status
 import logging
 
 from app.database import get_db
-from app.models import CandidateEvaluation, Resume, JobDescription, User
+from app.models import CandidateEvaluation, Resume, Job, User
 from app.schemas import (
     CandidateEvaluationCreate,
     CandidateEvaluationUpdate,
@@ -79,17 +79,13 @@ def create_screening_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if user is authorized
-    if current_user.role != "hr_manager":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only HR managers can create screening results")
-
     # Check if resume exists
     resume = db.query(Resume).filter(Resume.id == screening.resume_id).first()
     if not resume:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
 
     # Check if job exists
-    job = db.query(JobDescription).filter(JobDescription.id == screening.job_id).first()
+    job = db.query(Job).filter(Job.id == screening.job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -105,7 +101,7 @@ def create_screening_result(
     evaluation_start = datetime.utcnow()
     db_screening = CandidateEvaluation(
         **screening.dict(),
-        hr_manager_id=current_user.id,
+        admin_id=current_user.id,
         evaluation_date=datetime.utcnow(),
         evaluation_start_time=evaluation_start
     )
@@ -140,10 +136,6 @@ def update_screening_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if user is authorized
-    if current_user.role != "hr_manager":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only HR managers can update screening results")
-
     screening = db.query(CandidateEvaluation).filter(CandidateEvaluation.id == screening_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screening result not found")
@@ -190,7 +182,7 @@ def get_screening_results_by_job(
     current_user: User = Depends(get_current_user)
 ):
     # Check if job exists
-    job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -201,12 +193,11 @@ def get_screening_results_by_job(
     if status:
         query = query.filter(CandidateEvaluation.status == status)
     if min_score is not None:
-        query = query.filter(CandidateEvaluation.suitability_score >= min_score)
+        query = query.filter(CandidateEvaluation.overall_score >= min_score)
     if max_score is not None:
-        query = query.filter(CandidateEvaluation.suitability_score <= max_score)
+        query = query.filter(CandidateEvaluation.overall_score <= max_score)
 
-    screenings = query.all()
-    return screenings
+    return query.all()
 
 @router.post("/evaluate", response_model=CandidateEvaluationResponse, status_code=status.HTTP_201_CREATED)
 def evaluate_resume(
@@ -214,88 +205,37 @@ def evaluate_resume(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Automatically evaluate a resume against job requirements and store the result
-    """
-    try:
-        logger.info(f"Starting evaluation for resume {request.resume_id} and job {request.job_id}")
-        
-        # Check if user is authorized
-        if current_user.role != "hr_manager":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only HR managers can evaluate resumes")
+    # Get resume and job
+    resume = db.query(Resume).filter(Resume.id == request.resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
 
-        # Get resume and job data
-        resume = db.query(Resume).filter(Resume.id == request.resume_id).first()
-        if not resume:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
-        
-        job = db.query(JobDescription).filter(JobDescription.id == request.job_id).first()
-        if not job:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    job = db.query(Job).filter(Job.id == request.job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-        logger.info(f"Found resume and job. Resume text: {resume.text_content}")
-        logger.info(f"Job requirements: {job.required_skills}, {job.experience_required}, {job.location}")
+    # Calculate scores
+    result = evaluate_candidate(job, resume)
 
-        # Check if evaluation already exists
-        existing_evaluation = db.query(CandidateEvaluation).filter(
-            CandidateEvaluation.resume_id == request.resume_id,
-            CandidateEvaluation.job_id == request.job_id
-        ).first()
-        if existing_evaluation:
-            logger.warning(f"Evaluation already exists for resume {request.resume_id} and job {request.job_id}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Evaluation already exists for this resume and job"
-            )
+    # Create evaluation
+    evaluation = CandidateEvaluation(
+        resume_id=request.resume_id,
+        job_id=request.job_id,
+        admin_id=current_user.id,
+        overall_score=result.overall_score,
+        skill_match=result.skill_match,
+        experience_match=result.experience_match,
+        matching_skills=result.matching_skills,
+        comments=f"Automated evaluation based on skill match ({result.overall_score:.2f})",
+        status="Rejected" if result.overall_score < 0.5 else "Shortlisted",
+        evaluation_date=datetime.utcnow()
+    )
 
-        # Calculate suitability score
-        job_requirements = {
-            'required_skills': job.required_skills,
-            'experience_required': job.experience_required,
-            'location': job.location
-        }
-        
-        suitability_score = calculate_suitability_score(resume.text_content or "", job_requirements)
-        logger.info(f"Calculated suitability score: {suitability_score}")
-        
-        # Determine status based on score
-        if suitability_score >= 80:
-            status_val = "Shortlisted"
-        elif suitability_score >= 60:
-            status_val = "Pending Review"
-        else:
-            status_val = "Rejected"
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
 
-        logger.info(f"Determined status: {status_val}")
-
-        # Create evaluation record
-        evaluation = CandidateEvaluation(
-            resume_id=request.resume_id,
-            job_id=request.job_id,
-            hr_manager_id=current_user.id,
-            suitability_score=suitability_score,
-            comments=f"Automated evaluation based on skill match ({suitability_score}%)",
-            status=status_val,
-            evaluation_date=datetime.utcnow()
-        )
-        
-        db.add(evaluation)
-        db.commit()
-        db.refresh(evaluation)
-        
-        logger.info("Successfully created evaluation")
-        return evaluation
-        
-    except HTTPException as he:
-        logger.warning(f"HTTP exception during evaluation: {str(he)}")
-        raise he
-    except Exception as e:
-        logger.error(f"Error during evaluation: {str(e)}", exc_info=True)
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error during evaluation: {str(e)}"
-        )
+    return evaluation
 
 @router.delete("/{screening_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_screening_result(
@@ -303,14 +243,9 @@ def delete_screening_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if user is authorized
-    if current_user.role != "hr_manager":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only HR managers can delete screening results")
-
     screening = db.query(CandidateEvaluation).filter(CandidateEvaluation.id == screening_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screening result not found")
 
     db.delete(screening)
-    db.commit()
-    return None 
+    db.commit() 

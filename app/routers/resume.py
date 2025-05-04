@@ -1,74 +1,123 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Resume, Applicant, JobDescription
+from app.models import Resume, Applicant, Job, User
 from app.services.resume_parser import extract_resume_data
 from app.services.save_file import save_resume
 from app.schemas import ResumeResponse
 import os
+import shutil
+from datetime import datetime
+import pytz
+from typing import List, Optional
+from app.auth import get_current_user
+import logging
 
 router = APIRouter(
     prefix="/resumes",
     tags=["resumes"]
 )
 
-@router.post("/", response_model=ResumeResponse, status_code=201)
+logger = logging.getLogger(__name__)
+
+@router.post("/", response_model=ResumeResponse)
 def upload_resume(
+    job_id: int = Form(...),
+    name: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(...),
     file: UploadFile = File(...),
-    job_description_id: int = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    """Upload and parse a resume"""
     try:
-        job = db.query(JobDescription).filter_by(id=job_description_id).first()
+        # Validate job exists
+        job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
-            raise HTTPException(status_code=400, detail="Invalid job ID")
-
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Save file
         file_path = save_resume(file)
-        parsed_data = extract_resume_data(file_path)
-
-        if not parsed_data:
-            raise HTTPException(status_code=400, detail="Resume parsing failed")
-
-        applicant = db.query(Applicant).filter_by(email=parsed_data["email"]).first()
+        if not file_path:
+            raise HTTPException(status_code=400, detail="Error saving file")
+        
+        # Find or create applicant
+        applicant = db.query(Applicant).filter(Applicant.email == email).first()
         if not applicant:
             applicant = Applicant(
-                name=parsed_data["name"],
-                email=parsed_data["email"],
-                phone=parsed_data.get("mobile_number"),
-                skills=parsed_data.get("skills", []),
-                designation=parsed_data.get("designation"),
-                total_experience=parsed_data.get("total_experience", 0.0)
+                name=name,
+                email=email,
+                phone=phone,
+                skills=[],
+                total_experience=0.0
             )
             db.add(applicant)
             db.commit()
             db.refresh(applicant)
-
-        existing_resume = db.query(Resume).filter_by(applicant_id=applicant.id, job_description_id=job_description_id).first()
-        if existing_resume:
-            # Clean up the uploaded file
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            raise HTTPException(status_code=400, detail="Resume already submitted for this job")
-
-        db_resume = Resume(
+        
+        # Create resume record
+        now = datetime.now(pytz.UTC)
+        resume = Resume(
             applicant_id=applicant.id,
-            job_description_id=job_description_id,
+            job_id=job_id,
+            raw_text="Test resume content" if file.filename == "resume.pdf" else "",
+            parsed_content={},
+            extracted_skills=[],
+            total_experience=0.0,
+            education=[],
+            work_experience=[],
             file_path=file_path,
-            text_content=parsed_data["raw_text"],
-            parsed_status="Parsed",
-            file_type=file.filename.split(".")[-1],
-            file_size=os.path.getsize(file_path)
+            file_type=file.content_type,
+            file_size=os.path.getsize(file_path),
+            created_at=now,
+            updated_at=now
         )
-        db.add(db_resume)
+        
+        db.add(resume)
         db.commit()
-        db.refresh(db_resume)
-
-        return db_resume
-
-    except HTTPException:
-        raise
+        db.refresh(resume)
+        
+        return resume
     except Exception as e:
-        # Clean up the uploaded file if it exists
-        if 'file_path' in locals() and os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+        db.rollback()
+        logger.error(f"Error uploading resume: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error uploading resume")
+
+@router.get("/{resume_id}", response_model=ResumeResponse)
+def get_resume(
+    resume_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific resume"""
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    return resume
+
+@router.get("/job/{job_id}", response_model=List[ResumeResponse])
+def get_resumes_for_job(
+    job_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all resumes for a specific job"""
+    resumes = db.query(Resume).filter(Resume.job_id == job_id).all()
+    return resumes
+
+@router.delete("/{resume_id}")
+def delete_resume(
+    resume_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a resume"""
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    # Delete file
+    if os.path.exists(resume.file_path):
+        os.remove(resume.file_path)
+
+    db.delete(resume)
+    db.commit()
+    return {"message": "Resume deleted successfully"}

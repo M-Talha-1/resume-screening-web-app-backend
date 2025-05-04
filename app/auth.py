@@ -6,32 +6,44 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import os
+import logging
 from dotenv import load_dotenv
 
 from app.database import get_db
 from app.models import User
 from app.schemas import TokenData
+from app.config import settings
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+SECRET_KEY = settings.SECRET_KEY
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY must be set in environment variables")
+
+ALGORITHM = settings.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12  # Increased rounds for better security
+)
 
 # OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
     try:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception as e:
-        print(f"Password verification error: {str(e)}")
+        logger.error(f"Password verification error: {str(e)}")
         return False
 
 def get_password_hash(password: str) -> str:
@@ -39,7 +51,7 @@ def get_password_hash(password: str) -> str:
     try:
         return pwd_context.hash(password)
     except Exception as e:
-        print(f"Password hashing error: {str(e)}")
+        logger.error(f"Password hashing error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error hashing password"
@@ -53,9 +65,12 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
             return None
         if not verify_password(password, user.hashed_password):
             return None
+        # Update last login time
+        user.last_login = datetime.utcnow()
+        db.commit()
         return user
     except Exception as e:
-        print(f"Authentication error: {str(e)}")
+        logger.error(f"Authentication error: {str(e)}")
         return None
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -70,7 +85,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
     except Exception as e:
-        print(f"Token creation error: {str(e)}")
+        logger.error(f"Token creation error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error creating access token"
@@ -92,39 +107,11 @@ async def get_current_user(
         if email is None:
             raise credentials_exception
         token_data = TokenData(email=email)
-    except JWTError:
+    except JWTError as e:
+        logger.error(f"JWT validation error: {str(e)}")
         raise credentials_exception
     
     user = db.query(User).filter(User.email == token_data.email).first()
-    if user is None:
+    if user is None or not user.is_active:
         raise credentials_exception
     return user
-
-def get_user_by_token(db: Session, token: str) -> User:
-    """Get a user by their JWT token"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        user = db.query(User).filter(User.email == email).first()
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        return user
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
-    except Exception as e:
-        print(f"Error getting user by token: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error retrieving user"
-        ) 

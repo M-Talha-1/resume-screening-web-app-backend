@@ -1,0 +1,19 @@
+John Doe
+Software Engineer
+john.doe@example.com
+(123) 456-7890
+
+EDUCATION
+Bachelor of Science in Computer Science
+University of Technology
+2018 - 2022
+
+EXPERIENCE
+Software Engineer at Tech Corp
+2022 - Present
+- Developed and maintained web applications using Python and FastAPI
+- Implemented RESTful APIs and microservices architecture
+- Collaborated with cross-functional teams to deliver high-quality software
+
+SKILLS
+Python, FastAPI, SQL, Docker, AWS, Git, REST APIs, Microservices

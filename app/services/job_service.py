@@ -3,26 +3,26 @@ from sqlalchemy import func, and_, or_, text, case
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import HTTPException
-from app.models import JobDescription, Resume, CandidateEvaluation, Applicant, JobStatus, EvaluationStatus
+from app.models import Job, Resume, CandidateEvaluation, Applicant, JobStatus, EvaluationStatus
 from app.schemas import JobDescriptionCreate, JobDescriptionResponse, JobSearchParams, JobAnalyticsResponse
 from app.cache import get_cache, set_cache
 from sqlalchemy.types import String
 
-def get_all_jobs(db: Session) -> List[JobDescription]:
+def get_all_jobs(db: Session) -> List[Job]:
     """Get all job descriptions"""
-    jobs = db.query(JobDescription).all()
+    jobs = db.query(Job).all()
     return jobs
 
-def get_job_by_id(db: Session, job_id: int) -> JobDescription:
+def get_job_by_id(db: Session, job_id: int) -> Job:
     """Get a specific job description by ID"""
-    job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
 def create_job(db: Session, job: JobDescriptionCreate) -> JobDescriptionResponse:
     """Create a new job posting"""
-    db_job = JobDescription(**job.dict())
+    db_job = Job(**job.dict())
     db.add(db_job)
     db.commit()
     db.refresh(db_job)
@@ -30,7 +30,7 @@ def create_job(db: Session, job: JobDescriptionCreate) -> JobDescriptionResponse
 
 def get_job(db: Session, job_id: int) -> JobDescriptionResponse:
     """Get a specific job by ID"""
-    job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -44,21 +44,21 @@ def get_jobs(
     location: Optional[str] = None
 ) -> List[JobDescriptionResponse]:
     """Get all jobs with optional filters"""
-    query = db.query(JobDescription)
+    query = db.query(Job)
     
     if status:
-        query = query.filter(JobDescription.status == status)
+        query = query.filter(Job.status == status)
     if department:
-        query = query.filter(JobDescription.department == department)
+        query = query.filter(Job.department == department)
     if location:
-        query = query.filter(JobDescription.location == location)
+        query = query.filter(Job.location == location)
     
     jobs = query.offset(skip).limit(limit).all()
     return jobs
 
 def update_job(db: Session, job_id: int, job: JobDescriptionCreate) -> JobDescriptionResponse:
     """Update an existing job posting"""
-    db_job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    db_job = db.query(Job).filter(Job.id == job_id).first()
     if not db_job:
         raise HTTPException(status_code=404, detail="Job not found")
     
@@ -83,7 +83,7 @@ def update_job(db: Session, job_id: int, job: JobDescriptionCreate) -> JobDescri
 
 def delete_job(db: Session, job_id: int):
     """Delete a job posting"""
-    db_job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    db_job = db.query(Job).filter(Job.id == job_id).first()
     if db_job:
         db.delete(db_job)
         db.commit()
@@ -94,11 +94,11 @@ def delete_job(db: Session, job_id: int):
 
 def close_job(db: Session, job_id: int) -> JobDescriptionResponse:
     """Close a job posting"""
-    db_job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    db_job = db.query(Job).filter(Job.id == job_id).first()
     if not db_job:
         return None
     
-    db_job.status = "Closed"
+    db_job.status = JobStatus.CLOSED
     db.commit()
     db.refresh(db_job)
     
@@ -108,15 +108,15 @@ def close_job(db: Session, job_id: int) -> JobDescriptionResponse:
     
     return db_job
 
-def get_jobs_by_admin(admin_id: int, db: Session) -> List[JobDescription]:
+def get_jobs_by_admin(admin_id: int, db: Session) -> List[Job]:
     """Get all jobs posted by a specific admin"""
-    jobs = db.query(JobDescription).filter(JobDescription.admin_id == admin_id).all()
+    jobs = db.query(Job).filter(Job.admin_id == admin_id).all()
     return jobs
 
-def update_job_status(job_id: int, status: str, db: Session) -> JobDescription:
+def update_job_status(job_id: int, status: JobStatus, db: Session) -> Job:
     """Update the status of a job"""
     job = get_job_by_id(db, job_id)
-    if status not in ["Open", "Closed", "Filled"]:
+    if status not in JobStatus:
         raise HTTPException(status_code=400, detail="Invalid status")
     
     job.status = status
@@ -127,7 +127,7 @@ def update_job_status(job_id: int, status: str, db: Session) -> JobDescription:
 def get_job_applicants(
     db: Session,
     job_id: int,
-    status: Optional[str] = None,
+    status: Optional[EvaluationStatus] = None,
     min_score: Optional[float] = None,
     max_score: Optional[float] = None
 ) -> List[CandidateEvaluation]:
@@ -137,9 +137,9 @@ def get_job_applicants(
     if status:
         query = query.filter(CandidateEvaluation.status == status)
     if min_score is not None:
-        query = query.filter(CandidateEvaluation.suitability_score >= min_score)
+        query = query.filter(CandidateEvaluation.overall_score >= min_score)
     if max_score is not None:
-        query = query.filter(CandidateEvaluation.suitability_score <= max_score)
+        query = query.filter(CandidateEvaluation.overall_score <= max_score)
     
     return query.all()
 
@@ -147,7 +147,7 @@ def update_applicant_status(
     db: Session,
     job_id: int,
     applicant_id: int,
-    status: str,
+    status: EvaluationStatus,
     notes: Optional[str] = None
 ) -> CandidateEvaluation:
     """Update the status of an applicant for a specific job"""
@@ -170,15 +170,25 @@ def update_applicant_status(
 
 def get_job_statistics(db: Session, job_id: int) -> dict:
     """Get statistics for a specific job"""
-    job = db.query(JobDescription).filter(JobDescription.id == job_id).first()
+    job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         return None
     
+    total_applicants = db.query(func.count(Resume.id)).filter(Resume.job_id == job_id).scalar()
+    total_shortlisted = db.query(func.count(CandidateEvaluation.id)).filter(
+        CandidateEvaluation.job_id == job_id,
+        CandidateEvaluation.status == EvaluationStatus.SHORTLISTED
+    ).scalar()
+    total_rejected = db.query(func.count(CandidateEvaluation.id)).filter(
+        CandidateEvaluation.job_id == job_id,
+        CandidateEvaluation.status == EvaluationStatus.REJECTED
+    ).scalar()
+    
     stats = {
-        "total_applicants": job.total_applicants,
-        "total_shortlisted": job.total_shortlisted,
-        "total_rejected": job.total_rejected,
-        "average_score": db.query(func.avg(CandidateEvaluation.suitability_score))
+        "total_applicants": total_applicants,
+        "total_shortlisted": total_shortlisted,
+        "total_rejected": total_rejected,
+        "average_score": db.query(func.avg(CandidateEvaluation.overall_score))
             .filter(CandidateEvaluation.job_id == job_id)
             .scalar() or 0,
         "status_distribution": dict(
@@ -196,19 +206,19 @@ def search_jobs(
     search_params: JobSearchParams,
     skip: int = 0,
     limit: int = 100
-) -> List[JobDescription]:
+) -> List[Job]:
     """
     Advanced search for jobs with multiple filters
     """
-    query = db.query(JobDescription)
+    query = db.query(Job)
     
     # Full-text search
     if search_params.query:
         query = query.filter(
             or_(
-                JobDescription.title.ilike(f"%{search_params.query}%"),
-                JobDescription.description.ilike(f"%{search_params.query}%"),
-                JobDescription.required_skills.cast(String).ilike(f"%{search_params.query}%")
+                Job.title.ilike(f"%{search_params.query}%"),
+                Job.description.ilike(f"%{search_params.query}%"),
+                Job.required_skills.cast(String).ilike(f"%{search_params.query}%")
             )
         )
     
@@ -216,33 +226,33 @@ def search_jobs(
     if search_params.skills:
         for skill in search_params.skills:
             query = query.filter(
-                JobDescription.required_skills.cast(String).ilike(f"%{skill}%")
+                Job.required_skills.cast(String).ilike(f"%{skill}%")
             )
     
     # Experience range
     if search_params.min_experience is not None:
-        query = query.filter(JobDescription.experience_required >= search_params.min_experience)
+        query = query.filter(Job.experience_required >= search_params.min_experience)
     if search_params.max_experience is not None:
-        query = query.filter(JobDescription.experience_required <= search_params.max_experience)
+        query = query.filter(Job.experience_required <= search_params.max_experience)
     
     # Salary range
     if search_params.min_salary is not None:
-        query = query.filter(JobDescription.salary_range_min >= search_params.min_salary)
+        query = query.filter(Job.salary_range_min >= search_params.min_salary)
     if search_params.max_salary is not None:
-        query = query.filter(JobDescription.salary_range_max <= search_params.max_salary)
+        query = query.filter(Job.salary_range_max <= search_params.max_salary)
     
     # Additional filters
     if search_params.job_type:
-        query = query.filter(JobDescription.job_type == search_params.job_type)
+        query = query.filter(Job.job_type == search_params.job_type)
     if search_params.location:
-        query = query.filter(JobDescription.location == search_params.location)
+        query = query.filter(Job.location == search_params.location)
     if search_params.department:
-        query = query.filter(JobDescription.department == search_params.department)
+        query = query.filter(Job.department == search_params.department)
     if search_params.status:
-        query = query.filter(JobDescription.status == search_params.status)
+        query = query.filter(Job.status == search_params.status)
     
     # Sort by most recent first
-    query = query.order_by(JobDescription.posted_date.desc())
+    query = query.order_by(Job.posted_date.desc())
     
     return query.offset(skip).limit(limit).all()
 
@@ -250,7 +260,7 @@ def get_job_recommendations(
     db: Session,
     applicant_id: int,
     limit: int = 5
-) -> List[JobDescription]:
+) -> List[Job]:
     """
     Get job recommendations based on applicant's profile
     """
@@ -260,33 +270,33 @@ def get_job_recommendations(
         raise HTTPException(status_code=404, detail="Applicant not found")
     
     # Base query
-    query = db.query(JobDescription)
+    query = db.query(Job)
     
     # Match skills
     if applicant.skills:
         for skill in applicant.skills:
             query = query.filter(
-                func.jsonb_array_elements(JobDescription.required_skills).cast(text).ilike(f"%{skill}%")
+                func.jsonb_array_elements(Job.required_skills).cast(text).ilike(f"%{skill}%")
             )
     
     # Match experience
     if applicant.total_experience:
         query = query.filter(
-            JobDescription.experience_required <= applicant.total_experience
+            Job.experience_required <= applicant.total_experience
         )
     
     # Match location if available
     if applicant.current_location:
         query = query.filter(
-            JobDescription.location == applicant.current_location
+            Job.location == applicant.current_location
         )
     
     # Only show open jobs
-    query = query.filter(JobDescription.status == JobStatus.OPEN)
+    query = query.filter(Job.status == JobStatus.OPEN)
     
     # Sort by relevance (number of matching skills)
     query = query.order_by(
-        func.array_length(JobDescription.required_skills, 1).desc()
+        func.array_length(Job.required_skills, 1).desc()
     )
     
     return query.limit(limit).all()
@@ -305,7 +315,7 @@ def get_job_metrics(
         "total_applicants": job.total_applicants,
         "shortlisted": job.total_shortlisted,
         "rejected": job.total_rejected,
-        "average_score": db.query(func.avg(CandidateEvaluation.suitability_score))
+        "average_score": db.query(func.avg(CandidateEvaluation.overall_score))
             .filter(CandidateEvaluation.job_id == job_id)
             .scalar() or 0,
         "status": job.status,
@@ -332,12 +342,12 @@ def get_job_metrics(
     
     # Skill match distribution
     skill_matches = db.query(
-        func.floor(CandidateEvaluation.suitability_score / 20) * 20,
+        func.floor(CandidateEvaluation.overall_score / 20) * 20,
         func.count(CandidateEvaluation.id)
     ).filter(
         CandidateEvaluation.job_id == job_id
     ).group_by(
-        func.floor(CandidateEvaluation.suitability_score / 20)
+        func.floor(CandidateEvaluation.overall_score / 20)
     ).all()
     
     metrics["skill_match_distribution"] = {
@@ -354,7 +364,7 @@ def get_job_analytics(db: Session, job_id: int) -> JobAnalyticsResponse:
     if cached_data:
         return cached_data
 
-    job = db.query(JobDescription).filter_by(id=job_id).first()
+    job = db.query(Job).filter_by(id=job_id).first()
     if not job:
         return None
     
@@ -369,9 +379,9 @@ def get_job_analytics(db: Session, job_id: int) -> JobAnalyticsResponse:
         status=EvaluationStatus.REJECTED
     ).count()
     
-    # Average suitability score
+    # Average overall score
     avg_score = db.query(
-        func.avg(CandidateEvaluation.suitability_score)
+        func.avg(CandidateEvaluation.overall_score)
     ).filter_by(job_id=job_id).scalar() or 0
     
     # Status distribution
@@ -388,8 +398,8 @@ def get_job_analytics(db: Session, job_id: int) -> JobAnalyticsResponse:
     for low, high in score_ranges:
         count = db.query(CandidateEvaluation).filter(
             CandidateEvaluation.job_id == job_id,
-            CandidateEvaluation.suitability_score >= low,
-            CandidateEvaluation.suitability_score < high
+            CandidateEvaluation.overall_score >= low,
+            CandidateEvaluation.overall_score < high
         ).count()
         skill_match_dist[f"{low}-{high}"] = count
     

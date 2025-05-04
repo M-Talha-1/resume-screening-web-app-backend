@@ -1,32 +1,36 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from app.models import JobStatus, EvaluationStatus
+import re
+import json
 from enum import Enum
-
-class JobStatus(str, Enum):
-    OPEN = "Open"
-    CLOSED = "Closed"
-    FILLED = "Filled"
-    DRAFT = "Draft"
-
-class EvaluationStatus(str, Enum):
-    PENDING = "Pending"
-    SHORTLISTED = "Shortlisted"
-    REJECTED = "Rejected"
-    INTERVIEW_SCHEDULED = "Interview Scheduled"
-    OFFER_EXTENDED = "Offer Extended"
-    HIRED = "Hired"
+import pytz
 
 class UserBase(BaseModel):
     name: str
     email: EmailStr
-    role: str
+    role: Optional[str] = Field(default="user", pattern="^(admin|hr|user)$")
+    is_active: bool = True
 
 class UserCreate(UserBase):
     password: str
 
+    @validator('password')
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if not re.search(r"[A-Z]", v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r"[a-z]", v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r"\d", v):
+            raise ValueError('Password must contain at least one number')
+        return v
+
 class UserResponse(UserBase):
     id: int
+    role: str
     date_created: datetime
     last_login: Optional[datetime] = None
 
@@ -39,70 +43,164 @@ class UserLogin(BaseModel):
 
 class ApplicantBase(BaseModel):
     name: str
-    email: EmailStr
-    phone: Optional[str] = None
-    skills: Optional[List[str]] = None
-    designation: Optional[str] = None
-    total_experience: Optional[float] = None
-    current_company: Optional[str] = None
-    current_location: Optional[str] = None
-    notice_period: Optional[int] = None
-    expected_salary: Optional[float] = None
-    source: Optional[str] = None
+    email: str
+    phone: str
+    skills: List[str]
+    experience_years: float
+    linkedin: Optional[str] = None
+    github: Optional[str] = None
+    website: Optional[str] = None
+    education: Optional[List[Dict[str, str]]] = None
+    work_experience: Optional[List[Dict[str, Any]]] = None
 
 class ApplicantCreate(ApplicantBase):
     pass
 
 class ApplicantResponse(ApplicantBase):
     id: int
-    date_created: datetime
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         orm_mode = True
 
-class JobDescriptionBase(BaseModel):
+class JobStatus(str, Enum):
+    DRAFT = "Draft"
+    OPEN = "Open"
+    CLOSED = "Closed"
+    CANCELLED = "Cancelled"
+
+class JobBase(BaseModel):
     title: str
     description: str
-    required_skills: Optional[List[str]] = None
-    status: JobStatus = JobStatus.DRAFT
-    location: Optional[str] = None
+    requirements: List[str] = Field(default_factory=list)
+    department: str
+    location: str
+    salary_range: Dict[str, float]
+    job_type: str
+    experience_required: float
+    skills_required: List[str] = Field(default_factory=list)
+    status: JobStatus = JobStatus.OPEN
+
+    @validator('salary_range')
+    def validate_salary_range(cls, v):
+        if 'min' not in v or 'max' not in v:
+            raise ValueError("salary_range must contain 'min' and 'max' keys")
+        if v['min'] > v['max']:
+            raise ValueError("min salary cannot be greater than max salary")
+        return v
+
+    @validator('requirements', 'skills_required', pre=True)
+    def parse_json_fields(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return []
+        return v or []
+
+class JobCreate(JobBase):
+    pass
+
+class JobUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    requirements: Optional[List[str]] = None
     department: Optional[str] = None
-    experience_required: Optional[float] = None
-    salary_range_min: Optional[float] = None
-    salary_range_max: Optional[float] = None
+    location: Optional[str] = None
+    salary_range: Optional[Dict[str, float]] = None
     job_type: Optional[str] = None
-    closing_date: Optional[datetime] = None
+    experience_required: Optional[float] = None
+    skills_required: Optional[List[str]] = None
+    status: Optional[JobStatus] = None
 
-class JobDescriptionCreate(JobDescriptionBase):
-    admin_id: Optional[int] = None
+    @validator('requirements', 'skills_required', pre=True)
+    def parse_json_fields(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return []
+        return v or []
 
-class JobDescriptionResponse(JobDescriptionBase):
+    @validator('salary_range')
+    def validate_salary_range(cls, v):
+        if v is None:
+            return v
+        if 'min' not in v or 'max' not in v:
+            raise ValueError("salary_range must contain 'min' and 'max' keys")
+        if v['min'] > v['max']:
+            raise ValueError("min salary cannot be greater than max salary")
+        return v
+
+class JobResponse(BaseModel):
     id: int
+    title: str
+    description: str
+    requirements: List[str]
+    department: str
+    location: str
+    salary_range: Dict[str, float]
+    job_type: str
+    experience_required: float
+    skills_required: List[str]
+    status: JobStatus
     admin_id: int
-    posted_date: datetime
-    total_applicants: int
-    total_shortlisted: int
-    total_rejected: int
+    created_at: datetime
+    updated_at: Optional[datetime]
 
     class Config:
         orm_mode = True
 
 class ResumeBase(BaseModel):
     applicant_id: int
-    job_description_id: int
+    job_id: int
+    parsed_content: Dict[str, Any]
+    extracted_skills: List[str]
+    total_experience: float
+    education: List[Dict[str, str]]
+    work_experience: List[Dict[str, Any]]
     file_path: str
-    parsed_status: str
-    text_content: Optional[str] = None
     file_type: str
     file_size: int
-    status: str = "Pending"
 
 class ResumeCreate(ResumeBase):
     pass
 
 class ResumeResponse(ResumeBase):
     id: int
-    upload_date: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class CandidateEvaluationBase(BaseModel):
+    resume_id: int
+    job_id: int
+    overall_score: float = Field(ge=0, le=1)
+    semantic_score: float = Field(ge=0, le=1)
+    skills_score: float = Field(ge=0, le=1)
+    matching_skills: List[str]
+    comments: Optional[str] = None
+    status: EvaluationStatus = EvaluationStatus.PENDING
+
+class CandidateEvaluationCreate(CandidateEvaluationBase):
+    pass
+
+class CandidateEvaluationUpdate(BaseModel):
+    overall_score: Optional[float] = Field(None, ge=0, le=1)
+    semantic_score: Optional[float] = Field(None, ge=0, le=1)
+    skills_score: Optional[float] = Field(None, ge=0, le=1)
+    matching_skills: Optional[List[str]] = None
+    comments: Optional[str] = None
+    status: Optional[EvaluationStatus] = None
+
+class CandidateEvaluationResponse(CandidateEvaluationBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    resume: ResumeResponse
 
     class Config:
         orm_mode = True
@@ -111,31 +209,28 @@ class EvaluateRequest(BaseModel):
     resume_id: int
     job_id: int
 
-class CandidateEvaluationBase(BaseModel):
-    resume_id: int
-    job_id: int
-    suitability_score: float
-    comments: str
-    status: str
+class JobAnalytics(BaseModel):
+    total_applicants: int
+    average_score: float
+    matching_skills_frequency: Dict[str, int]
+    status_distribution: Dict[str, int]
+    daily_applications: Dict[str, int]
 
-class CandidateEvaluationCreate(CandidateEvaluationBase):
-    pass
+class JobSearchParams(BaseModel):
+    query: Optional[str] = None
+    skills: Optional[List[str]] = None
+    min_experience: Optional[float] = None
+    max_experience: Optional[float] = None
+    job_type: Optional[str] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    status: Optional[JobStatus] = None
 
-class CandidateEvaluationUpdate(BaseModel):
-    suitability_score: Optional[float] = None
-    comments: Optional[str] = None
-    status: Optional[str] = None
-
-class CandidateEvaluationResponse(CandidateEvaluationBase):
-    id: int
-    hr_manager_id: int
-    evaluation_date: datetime
-    last_updated: Optional[datetime] = None
-    evaluation_duration: Optional[float] = None  # Duration in minutes
-    evaluation_start_time: Optional[datetime] = None
-
-    class Config:
-        orm_mode = True
+    @validator('skills', pre=True)
+    def split_string_to_list(cls, v):
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(',')]
+        return v
 
 class AnalyticsResponse(BaseModel):
     total_jobs: int
@@ -144,7 +239,7 @@ class AnalyticsResponse(BaseModel):
     total_applicants: int
     shortlisted_applicants: int
     rejected_applicants: int
-    average_processing_time: float  # in days
+    average_processing_time: float
     top_skills: List[Dict[str, Any]]
     job_status_distribution: Dict[str, int]
     applicant_status_distribution: Dict[str, int]
@@ -160,25 +255,26 @@ class JobAnalyticsResponse(BaseModel):
     skill_match_distribution: Dict[str, int]
     experience_distribution: Dict[str, int]
 
+class UserTokenData(BaseModel):
+    id: int
+    email: str
+    name: str
+    role: str
+    is_active: bool
+
+    class Config:
+        orm_mode = True
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user: UserTokenData
+
+    class Config:
+        orm_mode = True
 
 class TokenData(BaseModel):
     email: Optional[str] = None
-    role: Optional[str] = None
-
-class JobSearchParams(BaseModel):
-    query: Optional[str] = None
-    skills: Optional[List[str]] = None
-    min_experience: Optional[float] = None
-    max_experience: Optional[float] = None
-    min_salary: Optional[float] = None
-    max_salary: Optional[float] = None
-    job_type: Optional[str] = None
-    location: Optional[str] = None
-    department: Optional[str] = None
-    status: Optional[JobStatus] = None
 
 class SkillTrendsResponse(BaseModel):
     timeframe: str
@@ -224,4 +320,30 @@ class JobRecommendationResponse(BaseModel):
     matching_skills: List[str]
     experience_match: bool
     location_match: bool
+
+class EvaluationResult(BaseModel):
+    job_id: int
+    resume_id: int
+    overall_score: float = Field(..., ge=0, le=1)
+    skill_match: float = Field(..., ge=0, le=1)
+    experience_match: float = Field(..., ge=0, le=1)
+    matching_skills: List[str]
+    evaluation_date: datetime
+
+    class Config:
+        from_attributes = True
+
+class CandidateEvaluation(BaseModel):
+    id: int
+    job_id: int
+    resume_id: int
+    overall_score: float
+    skill_match: float
+    experience_match: float
+    matching_skills: List[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
